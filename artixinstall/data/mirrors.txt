@@ -1,0 +1,46 @@
+# Artix Linux Mirror List
+# Generated for artixinstall
+# Format: Server = <url>
+
+# --- Worldwide ---
+Server = https://mirror1.artixlinux.org/repos/$repo/os/$arch
+Server = https://mirror.artixlinux.org/repos/$repo/os/$arch
+
+# --- Europe ---
+# Germany
+Server = https://ftp.uni-bayreuth.de/linux/artix-linux/repos/$repo/os/$arch
+Server = https://artix.wheez.tech/repos/$repo/os/$arch
+# Sweden
+Server = https://ftp.ludd.ltu.se/mirrors/artix/repos/$repo/os/$arch
+# France
+Server = https://mirrors.music.starachowice.pl/artix-linux/repos/$repo/os/$arch
+# Netherlands
+Server = https://mirror.pascalroeleven.nl/artix-linux/repos/$repo/os/$arch
+# Greece
+Server = https://ftp.cc.uoc.gr/mirrors/linux/artix/repos/$repo/os/$arch
+# Austria
+Server = https://mirror.easyname.at/artix-linux/repos/$repo/os/$arch
+
+# --- North America ---
+# United States
+Server = https://mirrors.rit.edu/artixlinux/repos/$repo/os/$arch
+Server = https://mirror.clarkson.edu/artix-linux/repos/$repo/os/$arch
+Server = https://ftp.osuosl.org/pub/artixlinux/repos/$repo/os/$arch
+# Canada
+Server = https://artix.mirror.digitalpacific.com.au/repos/$repo/os/$arch
+
+# --- Asia ---
+# India
+Server = https://mirror.sahilister.in/artixlinux/repos/$repo/os/$arch
+# China
+Server = https://mirrors.tuna.tsinghua.edu.cn/artixlinux/repos/$repo/os/$arch
+# Japan
+Server = https://mirrors.cat.net/artixlinux/repos/$repo/os/$arch
+
+# --- South America ---
+# Brazil
+Server = https://artix.c3sl.ufpr.br/repos/$repo/os/$arch
+
+# --- Oceania ---
+# Australia
+Server = https://mirror.aarnet.edu.au/pub/artixlinux/repos/$repo/os/$arch

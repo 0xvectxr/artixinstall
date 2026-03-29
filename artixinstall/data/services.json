@@ -1,0 +1,74 @@
+{
+  "NetworkManager": {
+    "openrc":  { "package": "networkmanager-openrc",  "enable": "rc-update add NetworkManager default" },
+    "runit":   { "package": "networkmanager-runit",   "enable": "ln -s /etc/runit/sv/NetworkManager /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "networkmanager-s6",      "enable": "s6-rc-bundle-update add default NetworkManager" },
+    "dinit":   { "package": "networkmanager-dinit",    "enable": "dinitctl enable NetworkManager" }
+  },
+  "dhcpcd": {
+    "openrc":  { "package": "dhcpcd-openrc",  "enable": "rc-update add dhcpcd default" },
+    "runit":   { "package": "dhcpcd-runit",   "enable": "ln -s /etc/runit/sv/dhcpcd /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "dhcpcd-s6",      "enable": "s6-rc-bundle-update add default dhcpcd" },
+    "dinit":   { "package": "dhcpcd-dinit",    "enable": "dinitctl enable dhcpcd" }
+  },
+  "wpa_supplicant": {
+    "openrc":  { "package": "wpa_supplicant-openrc",  "enable": "rc-update add wpa_supplicant default" },
+    "runit":   { "package": "wpa_supplicant-runit",   "enable": "ln -s /etc/runit/sv/wpa_supplicant /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "wpa_supplicant-s6",      "enable": "s6-rc-bundle-update add default wpa_supplicant" },
+    "dinit":   { "package": "wpa_supplicant-dinit",    "enable": "dinitctl enable wpa_supplicant" }
+  },
+  "bluetoothd": {
+    "openrc":  { "package": "bluez-openrc",  "enable": "rc-update add bluetoothd default" },
+    "runit":   { "package": "bluez-runit",   "enable": "ln -s /etc/runit/sv/bluetoothd /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "bluez-s6",      "enable": "s6-rc-bundle-update add default bluetoothd" },
+    "dinit":   { "package": "bluez-dinit",    "enable": "dinitctl enable bluetoothd" }
+  },
+  "sshd": {
+    "openrc":  { "package": "openssh-openrc",  "enable": "rc-update add sshd default" },
+    "runit":   { "package": "openssh-runit",   "enable": "ln -s /etc/runit/sv/sshd /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "openssh-s6",      "enable": "s6-rc-bundle-update add default sshd" },
+    "dinit":   { "package": "openssh-dinit",    "enable": "dinitctl enable sshd" }
+  },
+  "cronie": {
+    "openrc":  { "package": "cronie-openrc",  "enable": "rc-update add cronie default" },
+    "runit":   { "package": "cronie-runit",   "enable": "ln -s /etc/runit/sv/cronie /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "cronie-s6",      "enable": "s6-rc-bundle-update add default cronie" },
+    "dinit":   { "package": "cronie-dinit",    "enable": "dinitctl enable cronie" }
+  },
+  "cups": {
+    "openrc":  { "package": "cups-openrc",  "enable": "rc-update add cupsd default" },
+    "runit":   { "package": "cups-runit",   "enable": "ln -s /etc/runit/sv/cupsd /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "cups-s6",      "enable": "s6-rc-bundle-update add default cupsd" },
+    "dinit":   { "package": "cups-dinit",    "enable": "dinitctl enable cupsd" }
+  },
+  "alsa": {
+    "openrc":  { "package": "alsa-utils-openrc",  "enable": "rc-update add alsasound default" },
+    "runit":   { "package": "alsa-utils-runit",   "enable": "ln -s /etc/runit/sv/alsa /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "alsa-utils-s6",      "enable": "s6-rc-bundle-update add default alsa" },
+    "dinit":   { "package": "alsa-utils-dinit",    "enable": "dinitctl enable alsa" }
+  },
+  "pipewire": {
+    "openrc":  { "package": "pipewire",  "enable": "echo 'pipewire runs as a user service'" },
+    "runit":   { "package": "pipewire",  "enable": "echo 'pipewire runs as a user service'" },
+    "s6":      { "package": "pipewire",  "enable": "echo 'pipewire runs as a user service'" },
+    "dinit":   { "package": "pipewire",  "enable": "echo 'pipewire runs as a user service'" }
+  },
+  "lightdm": {
+    "openrc":  { "package": "lightdm-openrc",  "enable": "rc-update add lightdm default" },
+    "runit":   { "package": "lightdm-runit",   "enable": "ln -s /etc/runit/sv/lightdm /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "lightdm-s6",      "enable": "s6-rc-bundle-update add default lightdm" },
+    "dinit":   { "package": "lightdm-dinit",    "enable": "dinitctl enable lightdm" }
+  },
+  "sddm": {
+    "openrc":  { "package": "sddm-openrc",  "enable": "rc-update add sddm default" },
+    "runit":   { "package": "sddm-runit",   "enable": "ln -s /etc/runit/sv/sddm /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "sddm-s6",      "enable": "s6-rc-bundle-update add default sddm" },
+    "dinit":   { "package": "sddm-dinit",    "enable": "dinitctl enable sddm" }
+  },
+  "gdm": {
+    "openrc":  { "package": "gdm",  "enable": "rc-update add gdm default" },
+    "runit":   { "package": "gdm",  "enable": "ln -s /etc/runit/sv/gdm /etc/runit/runsvdir/default/" },
+    "s6":      { "package": "gdm",  "enable": "s6-rc-bundle-update add default gdm" },
+    "dinit":   { "package": "gdm",  "enable": "dinitctl enable gdm" }
+  }
+}

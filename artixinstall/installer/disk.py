@@ -1,0 +1,551 @@
+"""
+artixinstall.installer.disk — Disk detection, partitioning, formatting, and mounting.
+
+Handles both automatic and manual partitioning workflows, with support for
+EFI and BIOS systems, multiple filesystems, optional swap, and LUKS encryption.
+"""
+
+import os
+from artixinstall.utils.shell import run, MOUNT_POINT
+from artixinstall.utils.log import log_info, log_error
+from artixinstall.tui.screen import Screen
+from artixinstall.tui.menu import run_menu, run_selection_menu, MenuItem
+from artixinstall.tui.prompts import confirm_destructive, yes_no, text_input, password_input_confirmed
+
+
+def is_efi() -> bool:
+    """Check if the system booted in EFI mode."""
+    return os.path.isdir("/sys/firmware/efi")
+
+
+def detect_disks() -> list[dict]:
+    """
+    Detect available block devices.
+
+    Returns a list of dicts with keys: name, size, type, path, model.
+    """
+    rc, stdout, stderr = run("lsblk -dno NAME,SIZE,TYPE,MODEL")
+    if rc != 0:
+        log_error(f"Failed to detect disks: {stderr}")
+        return []
+
+    disks = []
+    for line in stdout.strip().splitlines():
+        parts = line.split(None, 3)
+        if len(parts) >= 3 and parts[2] == "disk":
+            model = parts[3].strip() if len(parts) > 3 else ""
+            disks.append({
+                "name": parts[0],
+                "size": parts[1],
+                "type": parts[2],
+                "path": f"/dev/{parts[0]}",
+                "model": model,
+            })
+    return disks
+
+
+def detect_disk_info(disk_path: str) -> dict:
+    """
+    Get detailed information about a disk.
+
+    Returns a dict with transport, rotational, removable.
+    """
+    name = os.path.basename(disk_path)
+    info = {"transport": "unknown", "rotational": False, "removable": False}
+
+    # Check if SSD or HDD
+    rot_path = f"/sys/block/{name}/queue/rotational"
+    if os.path.isfile(rot_path):
+        try:
+            with open(rot_path) as f:
+                info["rotational"] = f.read().strip() == "1"
+        except OSError:
+            pass
+
+    # Check if removable
+    rem_path = f"/sys/block/{name}/removable"
+    if os.path.isfile(rem_path):
+        try:
+            with open(rem_path) as f:
+                info["removable"] = f.read().strip() == "1"
+        except OSError:
+            pass
+
+    return info
+
+
+def configure_disk(screen: Screen) -> dict | None:
+    """
+    Interactive disk configuration flow.
+
+    Returns a config dict with keys:
+        disk: str — device path (e.g. /dev/sda)
+        layout: str — "auto" or "manual"
+        swap: bool — whether swap partition is included
+        filesystem: str — root filesystem
+        efi: bool — whether system is EFI
+        boot_part: str — boot partition path
+        root_part: str — root partition path
+        swap_part: str — swap partition path (or "")
+        encrypt: bool — whether LUKS encryption is used
+        encrypt_password: str — LUKS password (or "")
+
+    Or None if the user cancelled.
+    """
+    # Step 1: Detect and select disk
+    disks = detect_disks()
+    if not disks:
+        screen.show_error("No disks detected! Make sure you have a storage device connected.")
+        return None
+
+    items = []
+    for d in disks:
+        model_str = f" - {d['model']}" if d['model'] else ""
+        info = detect_disk_info(d["path"])
+        disk_type = "HDD" if info["rotational"] else "SSD"
+        if info["removable"]:
+            disk_type = "USB/Removable"
+
+        items.append(MenuItem(
+            label=f"{d['path']}{model_str}",
+            key=d["path"],
+            value=f"{d['size']} ({disk_type})",
+            is_set=True,
+        ))
+
+    selected = run_menu(screen, "Select a disk", items,
+                        footer="↑↓ Navigate  Enter Select  ESC Back")
+    if selected is None:
+        return None
+
+    disk_path = selected.key
+
+    # Step 2: Choose partitioning method
+    method = run_selection_menu(screen, f"Partition method for {disk_path}", [
+        "Automatic (wipe and partition entire disk)",
+        "Manual (launch cfdisk)",
+    ])
+    if method is None:
+        return None
+
+    efi = is_efi()
+
+    if method.startswith("Manual"):
+        return _manual_partition(screen, disk_path, efi)
+    else:
+        return _automatic_partition(screen, disk_path, efi)
+
+
+def _automatic_partition(screen: Screen, disk_path: str, efi: bool) -> dict | None:
+    """Automatic partitioning: wipe disk, create partitions, format, mount."""
+    # Ask about swap
+    swap_choice = run_selection_menu(screen, "Swap configuration", [
+        "With swap partition (4 GB)",
+        "With swap partition (8 GB)",
+        "Without swap (can add swapfile later)",
+    ])
+    if swap_choice is None:
+        return None
+    use_swap = not swap_choice.startswith("Without")
+    swap_size_mb = 8192 if "8 GB" in swap_choice else 4096
+
+    # Ask about filesystem
+    fs = run_selection_menu(screen, "Root filesystem", [
+        "ext4 (recommended, mature, reliable)",
+        "btrfs (snapshots, compression, modern)",
+        "xfs (high performance, large files)",
+        "f2fs (optimized for flash/SSD)",
+    ])
+    if fs is None:
+        return None
+    filesystem = fs.split()[0]
+
+    # Ask about encryption
+    encrypt = False
+    encrypt_password = ""
+    enc_result = yes_no(screen, "Enable LUKS disk encryption on root partition?", default=False)
+    if enc_result is None:
+        return None
+    if enc_result:
+        encrypt_password = password_input_confirmed(
+            screen,
+            prompt="Enter encryption passphrase",
+            confirm_prompt="Confirm encryption passphrase",
+        )
+        if encrypt_password is None:
+            return None
+        if not encrypt_password:
+            screen.show_error("Encryption passphrase cannot be empty.")
+            return None
+        encrypt = True
+
+    # Safety confirmation
+    enc_warning = " THIS WILL CREATE AN ENCRYPTED VOLUME." if encrypt else ""
+    if not confirm_destructive(screen,
+            f"This will permanently erase ALL data on {disk_path}.{enc_warning}\n"
+            "This action cannot be undone."):
+        return None
+
+    # Determine partition naming convention (nvme vs sd)
+    if "nvme" in disk_path or "mmcblk" in disk_path:
+        part_prefix = f"{disk_path}p"
+    else:
+        part_prefix = disk_path
+
+    boot_end = 513
+    swap_end = boot_end + swap_size_mb if use_swap else boot_end
+
+    config = {
+        "disk": disk_path,
+        "layout": "auto",
+        "swap": use_swap,
+        "swap_size_mb": swap_size_mb if use_swap else 0,
+        "filesystem": filesystem,
+        "efi": efi,
+        "boot_part": f"{part_prefix}1",
+        "root_part": "",
+        "swap_part": "",
+        "encrypt": encrypt,
+        "encrypt_password": encrypt_password,
+    }
+
+    if use_swap:
+        config["swap_part"] = f"{part_prefix}2"
+        config["root_part"] = f"{part_prefix}3"
+    else:
+        config["root_part"] = f"{part_prefix}2"
+
+    return config
+
+
+def _manual_partition(screen: Screen, disk_path: str, efi: bool) -> dict | None:
+    """
+    Launch cfdisk for manual partitioning, then ask the user which
+    partitions to use for boot, root, and swap.
+    """
+    from artixinstall.utils.shell import run_live
+
+    screen.show_message(
+        "Manual Partitioning",
+        f"cfdisk will now launch for {disk_path}.\n"
+        "Create your partitions, then write and quit.\n\n"
+        "You will need at minimum:\n"
+        "  - A boot partition (512MB+, EFI System type for UEFI)\n"
+        "  - A root partition (remainder)\n"
+        "  - Optionally a swap partition",
+    )
+
+    # Launch cfdisk — this takes over the terminal
+    curses_was_active = True
+    try:
+        import curses as _curses
+        _curses.endwin()
+    except Exception:
+        curses_was_active = False
+
+    run_live(f"cfdisk {disk_path}")
+
+    # Restore curses
+    if curses_was_active:
+        screen.stdscr.refresh()
+
+    # Now ask user to identify their partitions
+    rc, stdout, _ = run(f"lsblk -lno NAME,SIZE,TYPE,FSTYPE {disk_path}")
+    if rc != 0:
+        screen.show_error("Failed to read partition table after cfdisk.")
+        return None
+
+    parts = []
+    for line in stdout.strip().splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[2] == "part":
+            fstype = fields[3] if len(fields) > 3 else ""
+            parts.append({
+                "name": fields[0],
+                "size": fields[1],
+                "path": f"/dev/{fields[0]}",
+                "fstype": fstype,
+            })
+
+    if not parts:
+        screen.show_error("No partitions found. Did you write the table in cfdisk?")
+        return None
+
+    part_labels = [f"{p['path']} ({p['size']}{', ' + p['fstype'] if p['fstype'] else ''})" for p in parts]
+
+    # Select boot partition
+    boot_sel = run_selection_menu(screen, "Select BOOT partition", part_labels)
+    if boot_sel is None:
+        return None
+    boot_part = parts[part_labels.index(boot_sel)]["path"]
+
+    # Select root partition
+    remaining = [l for l in part_labels if l != boot_sel]
+    if not remaining:
+        screen.show_error("Not enough partitions for root.")
+        return None
+    root_sel = run_selection_menu(screen, "Select ROOT partition", remaining)
+    if root_sel is None:
+        return None
+    root_part = parts[part_labels.index(root_sel)]["path"]
+
+    # Ask about swap
+    swap_part = ""
+    remaining2 = [l for l in remaining if l != root_sel]
+    if remaining2:
+        use_swap = yes_no(screen, "Do you have a swap partition?", default=False)
+        if use_swap:
+            swap_sel = run_selection_menu(screen, "Select SWAP partition", remaining2)
+            if swap_sel:
+                swap_part = parts[part_labels.index(swap_sel)]["path"]
+
+    # Choose filesystem
+    fs = run_selection_menu(screen, "Root filesystem", [
+        "ext4 (recommended)", "btrfs", "xfs", "f2fs",
+    ])
+    if fs is None:
+        return None
+    filesystem = fs.split()[0]
+
+    # Ask about encryption
+    encrypt = False
+    encrypt_password = ""
+    enc_result = yes_no(screen, "Enable LUKS encryption on root?", default=False)
+    if enc_result:
+        encrypt_password = password_input_confirmed(
+            screen,
+            prompt="Enter encryption passphrase",
+            confirm_prompt="Confirm encryption passphrase",
+        )
+        if encrypt_password is None:
+            encrypt = False
+        elif encrypt_password:
+            encrypt = True
+        else:
+            screen.show_error("Empty passphrase — skipping encryption.")
+
+    return {
+        "disk": disk_path,
+        "layout": "manual",
+        "swap": bool(swap_part),
+        "swap_size_mb": 0,
+        "filesystem": filesystem,
+        "efi": efi,
+        "boot_part": boot_part,
+        "root_part": root_part,
+        "swap_part": swap_part,
+        "encrypt": encrypt,
+        "encrypt_password": encrypt_password,
+    }
+
+
+# ── Execution functions (called during installation) ──
+
+
+def partition_disk(config: dict) -> tuple[bool, str]:
+    """
+    Partition the disk according to the config.
+
+    Only runs for automatic layout — manual is already done via cfdisk.
+    """
+    if config["layout"] == "manual":
+        log_info("Skipping partitioning (manual layout)")
+        return True, ""
+
+    disk = config["disk"]
+    efi = config["efi"]
+    use_swap = config["swap"]
+    swap_size_mb = config.get("swap_size_mb", 4096)
+
+    # Wipe and create partition label
+    label = "gpt" if efi else "msdos"
+    rc, _, err = run(f"parted -s {disk} mklabel {label}")
+    if rc != 0:
+        return False, f"Failed to create partition label: {err}"
+
+    boot_end = 513  # MB
+
+    if efi:
+        # EFI boot partition: fat32 with ESP flag
+        rc, _, err = run(f"parted -s {disk} mkpart primary fat32 1MiB {boot_end}MiB")
+        if rc != 0:
+            return False, f"Failed to create boot partition: {err}"
+        rc, _, err = run(f"parted -s {disk} set 1 esp on")
+        if rc != 0:
+            return False, f"Failed to set ESP flag: {err}"
+    else:
+        # BIOS boot partition: ext2 with boot flag
+        rc, _, err = run(f"parted -s {disk} mkpart primary ext2 1MiB {boot_end}MiB")
+        if rc != 0:
+            return False, f"Failed to create boot partition: {err}"
+        rc, _, err = run(f"parted -s {disk} set 1 boot on")
+        if rc != 0:
+            return False, f"Failed to set boot flag: {err}"
+
+    if use_swap:
+        swap_end = boot_end + swap_size_mb
+        rc, _, err = run(f"parted -s {disk} mkpart primary linux-swap {boot_end}MiB {swap_end}MiB")
+        if rc != 0:
+            return False, f"Failed to create swap partition: {err}"
+        rc, _, err = run(f"parted -s {disk} mkpart primary {swap_end}MiB 100%")
+        if rc != 0:
+            return False, f"Failed to create root partition: {err}"
+    else:
+        rc, _, err = run(f"parted -s {disk} mkpart primary {boot_end}MiB 100%")
+        if rc != 0:
+            return False, f"Failed to create root partition: {err}"
+
+    # Wait for kernel to pick up new partitions
+    run("partprobe")
+    run("sleep 2")
+
+    log_info(f"Partitioned {disk} successfully")
+    return True, ""
+
+
+def format_partitions(config: dict) -> tuple[bool, str]:
+    """Format all partitions according to the config, including LUKS if enabled."""
+    boot_part = config["boot_part"]
+    root_part = config["root_part"]
+    swap_part = config.get("swap_part", "")
+    filesystem = config["filesystem"]
+    efi = config["efi"]
+    encrypt = config.get("encrypt", False)
+    encrypt_password = config.get("encrypt_password", "")
+
+    # Format boot partition
+    if efi:
+        rc, _, err = run(f"mkfs.fat -F 32 {boot_part}")
+    else:
+        rc, _, err = run(f"mkfs.ext2 -F {boot_part}")
+    if rc != 0:
+        return False, f"Failed to format boot partition: {err}"
+
+    # Handle root partition (possibly encrypting first)
+    actual_root = root_part
+    if encrypt and encrypt_password:
+        # Set up LUKS
+        rc, _, err = run(
+            f"echo -n '{encrypt_password}' | cryptsetup luksFormat --type luks2 --batch-mode {root_part} -"
+        )
+        if rc != 0:
+            return False, f"Failed to create LUKS volume: {err}"
+
+        rc, _, err = run(
+            f"echo -n '{encrypt_password}' | cryptsetup open {root_part} cryptroot -"
+        )
+        if rc != 0:
+            return False, f"Failed to open LUKS volume: {err}"
+
+        actual_root = "/dev/mapper/cryptroot"
+        config["_actual_root"] = actual_root
+
+        log_info("LUKS volume created and opened")
+
+    # Format root partition
+    fs_cmd = {
+        "ext4": f"mkfs.ext4 -F {actual_root}",
+        "btrfs": f"mkfs.btrfs -f {actual_root}",
+        "xfs": f"mkfs.xfs -f {actual_root}",
+        "f2fs": f"mkfs.f2fs -f {actual_root}",
+    }
+    rc, _, err = run(fs_cmd.get(filesystem, f"mkfs.ext4 -F {actual_root}"))
+    if rc != 0:
+        return False, f"Failed to format root partition: {err}"
+
+    # Format swap if applicable
+    if swap_part:
+        rc, _, err = run(f"mkswap {swap_part}")
+        if rc != 0:
+            return False, f"Failed to format swap: {err}"
+
+    log_info("Formatted all partitions")
+    return True, ""
+
+
+def mount_partitions(config: dict) -> tuple[bool, str]:
+    """Mount all partitions to the target mount point."""
+    encrypt = config.get("encrypt", False)
+
+    # Use decrypted device if encrypting
+    if encrypt:
+        root_dev = config.get("_actual_root", "/dev/mapper/cryptroot")
+    else:
+        root_dev = config["root_part"]
+
+    boot_part = config["boot_part"]
+    swap_part = config.get("swap_part", "")
+
+    # Mount root
+    rc, _, err = run(f"mount {root_dev} {MOUNT_POINT}")
+    if rc != 0:
+        return False, f"Failed to mount root: {err}"
+
+    # Create and mount boot
+    rc, _, err = run(f"mkdir -p {MOUNT_POINT}/boot")
+    if rc != 0:
+        return False, f"Failed to create /boot: {err}"
+
+    rc, _, err = run(f"mount {boot_part} {MOUNT_POINT}/boot")
+    if rc != 0:
+        return False, f"Failed to mount boot: {err}"
+
+    # Enable swap
+    if swap_part:
+        rc, _, err = run(f"swapon {swap_part}")
+        if rc != 0:
+            return False, f"Failed to enable swap: {err}"
+
+    log_info("Mounted all partitions")
+    return True, ""
+
+
+def unmount_all() -> tuple[bool, str]:
+    """Unmount all target partitions and close LUKS volumes."""
+    run("swapoff -a")
+    run(f"umount -R {MOUNT_POINT}")
+    # Close LUKS if open
+    run("cryptsetup close cryptroot 2>/dev/null")
+    return True, ""
+
+
+def setup_luks_hooks(config: dict) -> tuple[bool, str]:
+    """
+    If encryption is enabled, add the 'encrypt' hook to mkinitcpio
+    and regenerate the initramfs inside the chroot.
+    """
+    if not config.get("encrypt", False):
+        return True, ""
+
+    mkinitcpio_path = os.path.join(MOUNT_POINT, "etc", "mkinitcpio.conf")
+
+    try:
+        with open(mkinitcpio_path, "r") as f:
+            content = f.read()
+
+        # Add encrypt hook before filesystems
+        if "encrypt" not in content:
+            content = content.replace(
+                "HOOKS=(base udev autodetect modconf block filesystems keyboard fsck)",
+                "HOOKS=(base udev autodetect modconf block encrypt filesystems keyboard fsck)",
+            )
+            # Also handle other common formats
+            content = content.replace(
+                "HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)",
+                "HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt filesystems fsck)",
+            )
+
+        with open(mkinitcpio_path, "w") as f:
+            f.write(content)
+
+    except OSError as e:
+        log_error(f"Failed to update mkinitcpio.conf: {e}")
+        # Try to continue anyway
+
+    # Regenerate initramfs
+    rc, _, stderr = run("mkinitcpio -P", chroot=True)
+    if rc != 0:
+        return False, f"Failed to regenerate initramfs: {stderr}"
+
+    log_info("LUKS hooks configured and initramfs regenerated")
+    return True, ""
