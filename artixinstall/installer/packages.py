@@ -5,11 +5,15 @@ package management, optional repositories, and installation profiles.
 Mirrors archinstall's package-related configuration options.
 """
 
+import curses
 from pathlib import Path
 
 from artixinstall.utils.log import log_info
 from artixinstall.utils.shell import run
-from artixinstall.tui.screen import Screen
+from artixinstall.tui.screen import (
+    Screen, COLOR_NORMAL, COLOR_SELECTED, COLOR_SEPARATOR, COLOR_TITLE,
+    COLOR_VALUE_SET, COLOR_VALUE_UNSET,
+)
 from artixinstall.tui.menu import run_menu, run_selection_menu, MenuItem
 from artixinstall.tui.prompts import text_input, yes_no
 
@@ -183,6 +187,8 @@ _LIVE_PACMAN_BACKUPS = {
     "/etc/pacman.d/mirrorlist": Path("/tmp/artixinstall-mirrorlist.bak"),
 }
 
+_REPO_PACKAGE_CACHE: list[str] | None = None
+
 
 def configure_kernel(screen: Screen) -> str | None:
     """
@@ -262,6 +268,7 @@ def configure_additional_packages(screen: Screen,
         ))
 
         # Option to type custom packages
+        items.append(MenuItem("Search all repository packages...", key="__repo__"))
         items.append(MenuItem("Enter custom packages...", key="__custom__"))
         items.append(MenuItem("Clear all selections", key="__clear__"))
         items.append(MenuItem("Done", key="__done__"))
@@ -294,6 +301,12 @@ def configure_additional_packages(screen: Screen,
         if result.key == "__done__":
             return sorted(selected_packages)
 
+        elif result.key == "__repo__":
+            updated = _search_repository_packages(screen, selected_packages)
+            if updated is None:
+                return None
+            selected_packages = updated
+
         elif result.key == "__custom__":
             custom = text_input(
                 screen,
@@ -320,6 +333,119 @@ def configure_additional_packages(screen: Screen,
                 selected_packages.discard(pkg)
             else:
                 selected_packages.add(pkg)
+
+
+def _load_repository_packages() -> tuple[bool, list[str], str]:
+    """Load all package names from currently enabled pacman repositories."""
+    global _REPO_PACKAGE_CACHE
+    if _REPO_PACKAGE_CACHE is not None:
+        return True, list(_REPO_PACKAGE_CACHE), ""
+
+    rc, stdout, stderr = run(["pacman", "-Slq"], timeout=300)
+    if rc != 0:
+        return False, [], f"Failed to list repository packages: {stderr}"
+
+    packages: list[str] = []
+    seen: set[str] = set()
+    for line in stdout.splitlines():
+        pkg = line.strip()
+        if pkg and pkg not in seen:
+            packages.append(pkg)
+            seen.add(pkg)
+
+    _REPO_PACKAGE_CACHE = packages
+    log_info(f"Loaded {len(packages)} repository packages for interactive search")
+    return True, list(packages), ""
+
+
+def _search_repository_packages(screen: Screen, selected_packages: set[str]) -> set[str] | None:
+    """Browse and filter all repository packages with / search."""
+    ok, all_packages, err = _load_repository_packages()
+    if not ok:
+        screen.show_error(err)
+        return selected_packages
+
+    query = ""
+    filtered = list(all_packages)
+    selected_idx = 0
+    scroll_offset = 0
+
+    while True:
+        screen.refresh_size()
+        screen.clear()
+        screen.draw_header()
+        footer = "↑↓ Navigate  Enter/Space Toggle  / Search  c Clear  ESC Back"
+        screen.draw_footer(footer)
+
+        screen.draw_text(screen.content_y, 2, "Search Repository Packages", COLOR_TITLE, bold=True)
+        query_text = query if query else "(all packages)"
+        screen.draw_text(screen.content_y + 1, 2, f"Filter: {query_text}", COLOR_VALUE_SET if query else COLOR_VALUE_UNSET)
+        screen.draw_text(screen.content_y + 2, 2, f"Loaded: {len(all_packages)}  Showing: {len(filtered)}  Selected: {len(selected_packages)}", COLOR_SEPARATOR)
+
+        list_start_y = screen.content_y + 4
+        visible_count = max(1, screen.content_height - 5)
+
+        if selected_idx >= len(filtered):
+            selected_idx = max(0, len(filtered) - 1)
+
+        if selected_idx < scroll_offset:
+            scroll_offset = selected_idx
+        elif selected_idx >= scroll_offset + visible_count:
+            scroll_offset = selected_idx - visible_count + 1
+
+        if not filtered:
+            screen.draw_text(list_start_y, 4, "No packages match the current filter.", COLOR_VALUE_UNSET)
+        else:
+            for draw_idx in range(visible_count):
+                pkg_idx = scroll_offset + draw_idx
+                if pkg_idx >= len(filtered):
+                    break
+                pkg = filtered[pkg_idx]
+                y = list_start_y + draw_idx
+                marker = "✓" if pkg in selected_packages else "○"
+                label = f"  {marker} {pkg}"
+                if pkg_idx == selected_idx:
+                    screen.draw_text(y, 1, label.ljust(screen.width - 2)[:screen.width - 2], COLOR_SELECTED)
+                else:
+                    color = COLOR_VALUE_SET if pkg in selected_packages else COLOR_NORMAL
+                    screen.draw_text(y, 4, label, color)
+
+        screen.stdscr.refresh()
+        key = screen.get_input()
+
+        if key == curses.KEY_RESIZE:
+            continue
+        if key in (27, ord('q'), ord('Q')):
+            return selected_packages
+        if key in (curses.KEY_UP, ord('k')) and filtered:
+            selected_idx = max(0, selected_idx - 1)
+        elif key in (curses.KEY_DOWN, ord('j')) and filtered:
+            selected_idx = min(len(filtered) - 1, selected_idx + 1)
+        elif key == curses.KEY_HOME and filtered:
+            selected_idx = 0
+        elif key == curses.KEY_END and filtered:
+            selected_idx = len(filtered) - 1
+        elif key in (ord(' '), curses.KEY_ENTER, ord('\n'), ord('\r')) and filtered:
+            pkg = filtered[selected_idx]
+            if pkg in selected_packages:
+                selected_packages.discard(pkg)
+            else:
+                selected_packages.add(pkg)
+        elif key == ord('/'):
+            result = text_input(screen, "Search repository packages:", default=query)
+            if result is None:
+                continue
+            query = result.strip().lower()
+            filtered = [pkg for pkg in all_packages if query in pkg.lower()] if query else list(all_packages)
+            selected_idx = 0
+            scroll_offset = 0
+        elif key in (ord('c'), ord('C')):
+            query = ""
+            filtered = list(all_packages)
+            selected_idx = 0
+            scroll_offset = 0
+
+    return selected_packages
 
 
 def configure_repositories(screen: Screen) -> dict | None:
