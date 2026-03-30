@@ -22,6 +22,12 @@ PACKAGE_ALIASES = {
     "xf86-video-vmware": ["xf86-video-vmware", "xlibre-xf86-video-vmware", "xlibre-video-vmware"],
 }
 
+_PREFERRED_PROVIDER_PACKAGES = [
+    "iptables-nft",
+    "noto-fonts",
+    "noto-fonts-emoji",
+]
+
 # Obsolete split packages that conflict with their newer unified replacements.
 # These are passed to basestrap/pacman via --ignore so they don't block
 # installation when a package group (e.g. gnome-extra) pulls the replacement.
@@ -125,6 +131,20 @@ def _package_exists(pkg: str) -> bool:
     return rc_group == 0 and bool(group_out.strip())
 
 
+def _group_packages(group_name: str) -> list[str]:
+    """Expand a pacman package group into concrete package names."""
+    rc, stdout, _ = run(["pacman", "-Sg", group_name], timeout=30)
+    if rc != 0 or not stdout.strip():
+        return []
+
+    packages: list[str] = []
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == group_name:
+            packages.append(parts[1])
+    return packages
+
+
 def _candidate_names(pkg: str) -> list[str]:
     """Return candidate Artix package names for a requested install target."""
     candidates = PACKAGE_ALIASES.get(pkg, [pkg])
@@ -169,6 +189,14 @@ def _validate_package_list(packages: list[str]) -> tuple[bool, list[str], str]:
             log_error(f"Package lookup failed for {pkg}; tried: {', '.join(_candidate_names(pkg))}")
             continue
 
+        group_members = _group_packages(found)
+        if group_members:
+            kept = [member for member in group_members if member not in _IGNORED_CONFLICTS]
+            if kept:
+                resolved.extend(kept)
+                log_info(f"Expanded group {found} -> {', '.join(kept[:8])}" + (" ..." if len(kept) > 8 else ""))
+            continue
+
         resolved.append(found)
         if found != pkg:
             log_info(f"Resolved package {pkg} -> {found}")
@@ -176,7 +204,18 @@ def _validate_package_list(packages: list[str]) -> tuple[bool, list[str], str]:
     if missing:
         return False, [], "These packages or package groups were not found in the current repositories: " + ", ".join(missing)
 
-    return True, resolved, ""
+    final_resolved: list[str] = []
+    seen: set[str] = set()
+    for preferred in _PREFERRED_PROVIDER_PACKAGES:
+        if preferred not in seen and _package_exists(preferred):
+            final_resolved.append(preferred)
+            seen.add(preferred)
+    for pkg in resolved:
+        if pkg not in seen:
+            final_resolved.append(pkg)
+            seen.add(pkg)
+
+    return True, final_resolved, ""
 
 
 def install_extra_packages(packages: list[str]) -> tuple[bool, str]:
