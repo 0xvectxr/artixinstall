@@ -423,35 +423,7 @@ DESKTOP_ENVIRONMENTS = {
         ],
         "display_manager": None,
         "services": [],
-    },
-
-    "mangowm": {
-        "label": "MangoWM (Wayland adaptive tiling – AUR)",
-        "category": "wm",
-        "packages": [
-            "mangowm",
-            "waybar", "wofi", "dunst",
-            "foot", "thunar", "grim", "slurp", "wl-clipboard",
-            "polkit-gnome", "xdg-desktop-portal-wlr",
-            *_WAYLAND_BASE, *_PIPEWIRE, *_COMMON_UTILS,
-        ],
-        "display_manager": None,
-        "services": []
-    },
-
-    "niri": {
-        "label": "Niri (Wayland tiling – layout & stacking – AUR)",
-        "category": "wm",
-        "packages": [
-            "niri",
-            "waybar", "wofi", "dunst",
-            "foot", "thunar", "grim", "slurp", "wl-clipboard",
-            "polkit-gnome", "xdg-desktop-portal-wlr",
-            *_WAYLAND_BASE, *_PIPEWIRE, *_COMMON_UTILS,
-        ],
-        "display_manager": None,
-        "services": []
-    },
+    }
 }
 
 
