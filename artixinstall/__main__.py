@@ -61,10 +61,9 @@ from artixinstall.installer.hardware import (
 )
 from artixinstall.installer.packages import (
     configure_kernel, configure_audio, configure_profile,
-    configure_additional_packages, configure_repositories, configure_aur_helper,
+    configure_additional_packages, configure_repositories,
     get_kernel_packages, get_kernel_name, get_kernel_label,
     get_audio_packages, get_audio_label,
-    get_aur_helper_packages, get_aur_helper_label,
     get_profile_packages, get_profile_services, get_profile_label,
     apply_repositories, configure_live_repositories,
 )
@@ -97,7 +96,6 @@ class InstallerConfig:
         self.kernel: str = "linux"
         self.bootloader: str = "grub"
         self.grub_custom_params: str = ""
-        self.aur_helper: str = "none"
 
         # ── Profile & desktop ──
         self.profile: str = "desktop"
@@ -154,7 +152,6 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
     init_label = INIT_SYSTEMS.get(config.init_system, {}).get("label", config.init_system)
     kernel_label = get_kernel_label(config.kernel)
     audio_label = get_audio_label(config.audio)
-    aur_label = get_aur_helper_label(config.aur_helper)
     profile_label = get_profile_label(config.profile)
     de_label = get_desktop_label(config.desktop, config.display_manager)
     dm_enabled = get_desktop_category(config.desktop) != "none"
@@ -209,7 +206,6 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
         MenuItem("Desktop environment", "desktop", de_label, True),
         MenuItem("Greeter / login manager", "display_manager", dm_label, dm_enabled),
         MenuItem("Audio", "audio", audio_label, True),
-        MenuItem("AUR helper", "aur_helper", aur_label, True),
         MenuItem("Graphics & hardware", "hardware", hw_val, hw_set),
         MenuItem("Network manager", "network", config.network, True),
         MenuItem("", "", is_separator=True),
@@ -321,11 +317,6 @@ def _handle_menu_choice(screen: Screen, config: InstallerConfig,
         if result is not None:
             config.audio = result
 
-    elif key == "aur_helper":
-        result = configure_aur_helper(screen)
-        if result is not None:
-            config.aur_helper = result
-
     elif key == "hardware":
         result = configure_hardware(screen)
         if result is not None:
@@ -426,7 +417,6 @@ def _show_summary(screen: Screen, config: InstallerConfig) -> bool:
     dm_label = get_display_manager_label(config.display_manager) if get_desktop_category(config.desktop) != "none" else "TTY only"
     kernel_label = get_kernel_label(config.kernel)
     audio_label = get_audio_label(config.audio)
-    aur_label = get_aur_helper_label(config.aur_helper)
     profile_label = get_profile_label(config.profile)
 
     enc = " (LUKS encrypted)" if disk_info.get("encrypt") else ""
@@ -446,7 +436,6 @@ def _show_summary(screen: Screen, config: InstallerConfig) -> bool:
         f"Desktop:           {de_label}",
         f"Login manager:     {dm_label}",
         f"Audio:             {audio_label}",
-        f"AUR helper:        {aur_label}",
         f"Hardware:          {hw_summary}",
         "",
         f"Locale:            {config.locale}",
@@ -524,15 +513,6 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
     # Desktop service init-specific packages
     de_services = get_desktop_services(config.desktop, config.display_manager)
     extra_packages.extend(get_all_service_packages(de_services, config.init_system))
-
-    # Auto-enable AUR helper if desktop requires AUR packages
-    from artixinstall.installer.desktop import DESKTOP_ENVIRONMENTS
-    desktop_info = DESKTOP_ENVIRONMENTS.get(config.desktop, {})
-    if desktop_info.get("requires_aur") and config.aur_helper == "none":
-        config.aur_helper = "yay"  # Default to yay if AUR packages needed
-
-    # AUR helper packages
-    extra_packages.extend(get_aur_helper_packages(config.aur_helper))
 
     # Profile packages
     extra_packages.extend(get_profile_packages(config.profile))

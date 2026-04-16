@@ -436,8 +436,7 @@ DESKTOP_ENVIRONMENTS = {
             *_WAYLAND_BASE, *_PIPEWIRE, *_COMMON_UTILS,
         ],
         "display_manager": None,
-        "services": [],
-        "requires_aur": True,
+        "services": []
     },
 
     "niri": {
@@ -451,8 +450,7 @@ DESKTOP_ENVIRONMENTS = {
             *_WAYLAND_BASE, *_PIPEWIRE, *_COMMON_UTILS,
         ],
         "display_manager": None,
-        "services": [],
-        "requires_aur": True,
+        "services": []
     },
 }
 
