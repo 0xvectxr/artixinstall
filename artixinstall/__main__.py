@@ -154,7 +154,6 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
     init_label = INIT_SYSTEMS.get(config.init_system, {}).get("label", config.init_system)
     kernel_label = get_kernel_label(config.kernel)
     audio_label = get_audio_label(config.audio)
-    aur_label = get_aur_helper_label(config.aur_helper)
     profile_label = get_profile_label(config.profile)
     de_label = get_desktop_label(config.desktop, config.display_manager)
     dm_enabled = get_desktop_category(config.desktop) != "none"
@@ -209,7 +208,6 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
         MenuItem("Desktop environment", "desktop", de_label, True),
         MenuItem("Greeter / login manager", "display_manager", dm_label, dm_enabled),
         MenuItem("Audio", "audio", audio_label, True),
-        MenuItem("AUR helper", "aur_helper", aur_label, True),
         MenuItem("Graphics & hardware", "hardware", hw_val, hw_set),
         MenuItem("Network manager", "network", config.network, True),
         MenuItem("", "", is_separator=True),
@@ -289,6 +287,27 @@ def _handle_menu_choice(screen: Screen, config: InstallerConfig,
         result = configure_desktop(screen)
         if result is not None:
             config.desktop = result
+
+            # Check if desktop requires AUR packages (mangowm, niri)
+            from artixinstall.tui.prompts import yes_no
+            from artixinstall.installer.desktop import DESKTOP_ENVIRONMENTS
+            desktop_info = DESKTOP_ENVIRONMENTS.get(config.desktop, {})
+            if desktop_info.get("requires_aur"):
+                # Warn about AUR requirement
+                aur_confirmed = yes_no(screen,
+                    f"{desktop_info.get('label')} requires AUR packages.\n\n"
+                    f"yay will be automatically built and installed.\n"
+                    f"This requires: git, base-devel, and Rust toolchain.\n\n"
+                    f"Continue?",
+                    default=True)
+                if aur_confirmed is None or not aur_confirmed:
+                    # User declined or cancelled - go back to desktop selection
+                    config.desktop = "none"
+                    return True
+                else:
+                    # User confirmed - auto-enable yay
+                    config.aur_helper = "yay"
+
             if get_desktop_category(config.desktop) != "none":
                 dm_result = configure_display_manager(screen, config.desktop)
                 if dm_result is not None:
@@ -320,11 +339,6 @@ def _handle_menu_choice(screen: Screen, config: InstallerConfig,
         result = configure_audio(screen)
         if result is not None:
             config.audio = result
-
-    elif key == "aur_helper":
-        result = configure_aur_helper(screen)
-        if result is not None:
-            config.aur_helper = result
 
     elif key == "hardware":
         result = configure_hardware(screen)
@@ -426,7 +440,6 @@ def _show_summary(screen: Screen, config: InstallerConfig) -> bool:
     dm_label = get_display_manager_label(config.display_manager) if get_desktop_category(config.desktop) != "none" else "TTY only"
     kernel_label = get_kernel_label(config.kernel)
     audio_label = get_audio_label(config.audio)
-    aur_label = get_aur_helper_label(config.aur_helper)
     profile_label = get_profile_label(config.profile)
 
     enc = " (LUKS encrypted)" if disk_info.get("encrypt") else ""
@@ -446,7 +459,6 @@ def _show_summary(screen: Screen, config: InstallerConfig) -> bool:
         f"Desktop:           {de_label}",
         f"Login manager:     {dm_label}",
         f"Audio:             {audio_label}",
-        f"AUR helper:        {aur_label}",
         f"Hardware:          {hw_summary}",
         "",
         f"Locale:            {config.locale}",
@@ -524,15 +536,6 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
     # Desktop service init-specific packages
     de_services = get_desktop_services(config.desktop, config.display_manager)
     extra_packages.extend(get_all_service_packages(de_services, config.init_system))
-
-    # Auto-enable AUR helper if desktop requires AUR packages
-    from artixinstall.installer.desktop import DESKTOP_ENVIRONMENTS
-    desktop_info = DESKTOP_ENVIRONMENTS.get(config.desktop, {})
-    if desktop_info.get("requires_aur") and config.aur_helper == "none":
-        config.aur_helper = "yay"  # Default to yay if AUR packages needed
-
-    # AUR helper packages
-    extra_packages.extend(get_aur_helper_packages(config.aur_helper))
 
     # Profile packages
     extra_packages.extend(get_profile_packages(config.profile))
@@ -682,6 +685,13 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
             ),
         })
 
+    # Build AUR helper if needed (for AUR packages like mangowm, niri)
+    if config.aur_helper == "yay":
+        steps.append({
+            "label": "Building yay AUR helper",
+            "func": lambda: _build_aur_helper(config.aur_helper),
+        })
+
     steps.append({
         "label": "Installing bootloader",
         "func": lambda: apply_bootloader(
@@ -728,6 +738,7 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
 def _handle_post_install(screen: Screen, config: InstallerConfig) -> bool:
     """Offer reboot/chroot actions after a successful installation."""
     from artixinstall.utils.shell import run, run_live, MOUNT_POINT
+    from artixinstall.installer.packages import AUR_HELPERS
 
     def eject_install_media() -> None:
         """Best-effort eject of attached optical install media before reboot."""
@@ -739,6 +750,18 @@ def _handle_post_install(screen: Screen, config: InstallerConfig) -> bool:
             parts = line.split()
             if len(parts) == 2 and parts[1] == "rom":
                 run(["eject", f"/dev/{parts[0]}"])
+
+    # Show AUR helper installation instructions if selected
+    if config.aur_helper != "none":
+        helper_info = AUR_HELPERS.get(config.aur_helper, {})
+        install_cmd = helper_info.get("install_note", "")
+        if install_cmd:
+            screen.show_success(
+                f"AUR Helper: {helper_info.get('label', config.aur_helper)}\n\n"
+                f"To install after reboot, run in your user shell:\n\n"
+                f"  {install_cmd}\n\n"
+                f"(You'll need git and base-devel installed)"
+            )
 
     while True:
         choice = run_selection_menu(screen, "Installation complete - next step", [
@@ -775,6 +798,41 @@ def _handle_post_install(screen: Screen, config: InstallerConfig) -> bool:
                 "Exited chroot.\n\n"
                 "You can now choose whether to reboot or exit the installer."
             )
+
+
+def _build_aur_helper(aur_helper: str) -> tuple[bool, str]:
+    """
+    Build and install an AUR helper (yay-bin or paru-bin) in the chroot.
+
+    This clones the AUR repository and builds it using makepkg.
+    """
+    from artixinstall.utils.shell import run, MOUNT_POINT
+
+    if aur_helper != "yay":
+        return True, ""  # Only yay is auto-built
+
+    repo_url = "https://aur.archlinux.org/yay-bin.git"
+    build_dir = f"{MOUNT_POINT}/tmp/yay-bin-build"
+
+    try:
+        # Clone AUR repo
+        rc, _, stderr = run(f"mkdir -p {build_dir} && cd {build_dir} && git clone {repo_url} .", shell=True)
+        if rc != 0:
+            return False, f"Failed to clone yay-bin AUR: {stderr}"
+
+        # Build and install
+        rc, _, stderr = run(
+            f"cd {build_dir} && chroot {MOUNT_POINT} bash -c 'cd /tmp/yay-bin-build && makepkg -si --noconfirm'",
+            shell=True
+        )
+        if rc != 0:
+            return False, f"Failed to build yay-bin: {stderr}"
+
+        log_info(f"Built and installed yay-bin")
+        return True, ""
+
+    except Exception as e:
+        return False, f"Error building AUR helper: {e}"
 
 
 def _finalize(config: InstallerConfig) -> tuple[bool, str]:

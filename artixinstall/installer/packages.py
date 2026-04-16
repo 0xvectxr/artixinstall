@@ -72,19 +72,24 @@ PIPEWIRE_INIT_PACKAGES = {
 
 
 # ── AUR helper options ──
+# Note: These are informational only. AUR helpers must be installed
+# post-installation from AUR since they're not in standard repositories.
 
 AUR_HELPERS = {
     "none": {
         "label": "None (no AUR support)",
         "packages": [],
+        "install_note": "",
     },
     "yay": {
         "label": "Yay (Rust-based, fast)",
-        "packages": ["yay"],
+        "packages": [],  # Install post-system via: git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si
+        "install_note": "git clone https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si",
     },
     "paru": {
         "label": "Paru (Rust-based, feature-rich)",
-        "packages": ["paru"],
+        "packages": [],  # Install post-system via: git clone https://aur.archlinux.org/paru-bin.git && cd paru-bin && makepkg -si
+        "install_note": "git clone https://aur.archlinux.org/paru-bin.git && cd paru-bin && makepkg -si",
     },
 }
 
@@ -248,12 +253,16 @@ def configure_aur_helper(screen: Screen) -> str | None:
     """
     Interactive AUR helper selection.
 
+    Note: AUR helpers are installed post-installation since they're not
+    in standard repositories. Selection here is for reference and will
+    show installation instructions after setup completes.
+
     Returns the helper key ("yay", "paru", "none"), or None if cancelled.
     """
     options = [info["label"] for info in AUR_HELPERS.values()]
     keys = list(AUR_HELPERS.keys())
 
-    selected = run_selection_menu(screen, "Select AUR helper (needed for AUR packages)", options)
+    selected = run_selection_menu(screen, "Select AUR helper (install post-system from AUR)", options)
     if selected is None:
         return None
 
