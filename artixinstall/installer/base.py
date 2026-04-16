@@ -460,3 +460,86 @@ def copy_pacman_conf() -> tuple[bool, str]:
             log_error(f"Failed to copy pacman.conf: {e}")
 
     return True, ""
+
+
+def install_aur_packages(aur_packages: list[str],
+                         username: str) -> tuple[bool, str]:
+    """Install packages from the AUR inside the chroot.
+
+    Uses ``makepkg`` running as *username* (``makepkg`` refuses to run as
+    root).  ``git`` and ``base-devel`` must already be installed in the
+    target — they are part of the default base package set.
+
+    Parameters
+    ----------
+    aur_packages : list[str]
+        AUR package names to install (e.g. ``["mangowm-git"]``).
+    username : str
+        The non-root user account created earlier in the install flow.
+
+    Returns
+    -------
+    tuple[bool, str]
+        (success, error_message)
+    """
+    if not aur_packages:
+        return True, ""
+
+    build_dir = f"/home/{username}/.cache/aur-build"
+
+    # Create the build directory owned by the user
+    rc, _, stderr = run(
+        f"mkdir -p {build_dir} && chown {username}:{username} {build_dir}",
+        chroot=True,
+    )
+    if rc != 0:
+        return False, f"Failed to create AUR build directory: {stderr}"
+
+    # Temporarily allow the user to run pacman without password (for makepkg -si)
+    sudoers_tmp = "/etc/sudoers.d/aur-install-tmp"
+    rc, _, stderr = run(
+        f'echo "{username} ALL=(ALL) NOPASSWD: /usr/bin/pacman" > {sudoers_tmp}',
+        chroot=True,
+    )
+    if rc != 0:
+        log_error(f"Failed to set temp sudoers for AUR install: {stderr}")
+
+    errors = []
+    for pkg in aur_packages:
+        log_info(f"Installing AUR package: {pkg}")
+
+        clone_url = f"https://aur.archlinux.org/{pkg}.git"
+        pkg_dir = f"{build_dir}/{pkg}"
+
+        # Clone the PKGBUILD
+        rc, _, stderr = run(
+            f"su - {username} -c 'git clone --depth 1 {clone_url} {pkg_dir}'",
+            chroot=True,
+            timeout=120,
+        )
+        if rc != 0:
+            errors.append(f"Failed to clone {pkg}: {stderr}")
+            continue
+
+        # Build and install
+        rc, _, stderr = run(
+            f"su - {username} -c 'cd {pkg_dir} && makepkg -si --noconfirm --needed'",
+            chroot=True,
+            timeout=1800,
+        )
+        if rc != 0:
+            errors.append(f"Failed to build/install {pkg}: {stderr}")
+            continue
+
+        log_info(f"AUR package {pkg} installed successfully")
+
+    # Remove the temporary sudoers entry
+    run(f"rm -f {sudoers_tmp}", chroot=True)
+
+    # Clean up build dir
+    run(f"rm -rf {build_dir}", chroot=True)
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, ""

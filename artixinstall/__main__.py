@@ -33,6 +33,7 @@ from artixinstall.installer.init import (
 from artixinstall.installer.base import (
     install_base_system, install_extra_packages,
     generate_fstab, copy_mirrorlist, copy_pacman_conf, setup_mirrorlist,
+    install_aur_packages,
 )
 from artixinstall.installer.prereqs import install_live_prerequisites, check_live_environment
 from artixinstall.installer.locale import (
@@ -691,20 +692,32 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
         "func": lambda: _finalize(config),
     })
 
+    # AUR packages (must come after user creation and finalization)
+    aur_pkgs = get_desktop_aur_packages(config.desktop)
+    if aur_pkgs and config.user:
+        steps.append({
+            "label": f"Installing AUR packages ({', '.join(aur_pkgs)})",
+            "func": lambda pkgs=list(aur_pkgs), user=config.user["username"]: (
+                install_aur_packages(pkgs, user)
+            ),
+        })
+
     # ══════════════════════════════════════
     # Run the installation
     # ══════════════════════════════════════
     success = show_progress(screen, steps)
 
     if success:
-        # Show AUR package notice before post-install menu
+        # Show AUR package notice if packages couldn't be auto-installed
         aur_pkgs = get_desktop_aur_packages(config.desktop)
-        if aur_pkgs:
+        if aur_pkgs and not config.user:
+            # No user account = couldn't auto-install AUR packages
             aur_list = " ".join(aur_pkgs)
             screen.show_success(
                 "Installation complete!\n\n"
                 "NOTE: Your desktop requires AUR packages\n"
-                "that could not be installed automatically:\n\n"
+                "that could not be installed automatically\n"
+                "(no user account was created):\n\n"
                 f"  {aur_list}\n\n"
                 "After rebooting, install them with:\n"
                 f"  yay -S {aur_list}\n"
