@@ -48,7 +48,7 @@ from artixinstall.installer.users import (
     apply_root_password, apply_user,
 )
 from artixinstall.installer.bootloader import (
-    configure_bootloader, apply_bootloader, get_bootloader_packages,
+    configure_bootloader, configure_grub_custom_params, apply_bootloader, get_bootloader_packages,
 )
 from artixinstall.installer.desktop import (
     configure_desktop, configure_display_manager,
@@ -95,6 +95,7 @@ class InstallerConfig:
         self.init_system: str = "openrc"
         self.kernel: str = "linux"
         self.bootloader: str = "grub"
+        self.grub_custom_params: str = ""
 
         # ── Profile & desktop ──
         self.profile: str = "desktop"
@@ -130,6 +131,7 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
 
     # ── Bootloader ──
     boot_label = config.bootloader.upper()
+    boot_custom = f" [{config.grub_custom_params[:20]}...]" if config.grub_custom_params else ""
 
     # ── Users ──
     user_val = "not set"
@@ -188,6 +190,7 @@ def _build_main_menu(config: InstallerConfig) -> list[MenuItem]:
         # ── Disk & Boot ──
         MenuItem("Disk configuration", "disk", disk_val, disk_set),
         MenuItem("Bootloader", "bootloader", boot_label, True),
+        MenuItem("Bootloader parameters", "grub_params", boot_custom or "(none)", True),
         MenuItem("", "", is_separator=True),
 
         # ── System ──
@@ -329,6 +332,11 @@ def _handle_menu_choice(screen: Screen, config: InstallerConfig,
         if result is not None:
             config.bootloader = result
 
+    elif key == "grub_params":
+        result = configure_grub_custom_params(screen)
+        if result is not None:
+            config.grub_custom_params = result
+
     elif key == "packages":
         result = configure_additional_packages(screen, config.additional_packages)
         if result is not None:
@@ -420,6 +428,7 @@ def _show_summary(screen: Screen, config: InstallerConfig) -> bool:
         f"Separate /home:    {'Yes' if disk_info.get('home') else 'No'}",
         f"Boot mode:         {'UEFI' if disk_info.get('efi') else 'BIOS'}",
         f"Bootloader:        {config.bootloader}",
+        f"Bootloader params:       {config.grub_custom_params or '(none)'}",
         "",
         f"Profile:           {profile_label}",
         f"Init system:       {init_label}",
@@ -655,7 +664,7 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
     steps.append({
         "label": "Installing bootloader",
         "func": lambda: apply_bootloader(
-            config.bootloader, config.disk, config.kernel
+            config.bootloader, config.disk, config.kernel, config.grub_custom_params
         ),
     })
 
