@@ -54,7 +54,7 @@ from artixinstall.installer.desktop import (
     configure_desktop, configure_display_manager,
     get_desktop_packages, get_desktop_services,
     get_desktop_label, get_display_manager_label, get_desktop_category,
-    get_display_manager_warning,
+    get_display_manager_warning, get_desktop_aur_packages,
 )
 from artixinstall.installer.hardware import (
     configure_hardware, HardwareConfig, apply_laptop_power,
@@ -697,6 +697,19 @@ def _run_installation(screen: Screen, config: InstallerConfig) -> bool:
     success = show_progress(screen, steps)
 
     if success:
+        # Show AUR package notice before post-install menu
+        aur_pkgs = get_desktop_aur_packages(config.desktop)
+        if aur_pkgs:
+            aur_list = " ".join(aur_pkgs)
+            screen.show_success(
+                "Installation complete!\n\n"
+                "NOTE: Your desktop requires AUR packages\n"
+                "that could not be installed automatically:\n\n"
+                f"  {aur_list}\n\n"
+                "After rebooting, install them with:\n"
+                f"  yay -S {aur_list}\n"
+                "  (or paru, or manually from aur.archlinux.org)"
+            )
         return _handle_post_install(screen, config)
     else:
         screen.show_error(

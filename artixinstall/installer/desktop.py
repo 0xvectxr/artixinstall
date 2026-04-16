@@ -425,16 +425,17 @@ DESKTOP_ENVIRONMENTS = {
     },
 
     "mangowm": {
-        "label": "MangoWM (Wayland compositor – dwl-based)",
+        "label": "MangoWM (Wayland compositor – AUR only)",
         "category": "wm",
         "packages": [
-            # MangoWM is AUR-only (mangowm-git). The installer will
-            # note this and skip validation if the package is missing.
+            # MangoWM itself must be installed from AUR (mangowm-git).
+            # Only companion packages from the official repos are listed here.
             "waybar", "wofi", "dunst",
             "foot", "thunar", "grim", "slurp", "wl-clipboard",
             "polkit-gnome", "xdg-desktop-portal-wlr",
             *_WAYLAND_BASE, *_COMMON_UTILS,
         ],
+        "aur_packages": ["mangowm-git"],
         "display_manager": None,
         "services": [],
     },
@@ -598,3 +599,13 @@ def get_display_manager_warning(desktop: str, display_manager: str) -> str:
     rules = DISPLAY_MANAGER_RECOMMENDATIONS.get(desktop, {})
     warnings = rules.get("warnings", {})
     return warnings.get(display_manager, "")
+
+
+def get_desktop_aur_packages(desktop: str) -> list[str]:
+    """Return AUR package names required for a desktop entry.
+
+    These packages cannot be installed via pacman/basestrap and must
+    be installed from the AUR after the system is set up.
+    """
+    info = DESKTOP_ENVIRONMENTS.get(desktop, {})
+    return list(info.get("aur_packages", []))
