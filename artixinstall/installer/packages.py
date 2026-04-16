@@ -63,13 +63,6 @@ AUDIO_SERVERS = {
     },
 }
 
-PIPEWIRE_INIT_PACKAGES = {
-    "openrc": ["pipewire-openrc", "pipewire-pulse-openrc", "wireplumber-openrc"],
-    "runit": ["pipewire-runit", "pipewire-pulse-runit", "wireplumber-runit"],
-    "s6": ["pipewire-s6", "pipewire-pulse-s6", "wireplumber-s6"],
-    "dinit": ["pipewire-dinit", "pipewire-pulse-dinit", "wireplumber-dinit"],
-}
-
 
 # ── AUR helper options ──
 
@@ -540,8 +533,9 @@ def get_audio_packages(audio: str, init_system: str | None = None) -> list[str]:
     """Get the package list for an audio server choice."""
     info = AUDIO_SERVERS.get(audio, AUDIO_SERVERS["pipewire"])
     packages = list(info.get("packages", []))
-    if audio == "pipewire" and init_system:
-        packages.extend(PIPEWIRE_INIT_PACKAGES.get(init_system, []))
+    # Note: PipeWire runs as a user service on Artix (no init-specific
+    # packages exist).  DEs/WMs that need it should autostart it from
+    # their session config.
     return packages
 
 

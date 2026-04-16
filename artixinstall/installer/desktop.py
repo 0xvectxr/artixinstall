@@ -528,7 +528,7 @@ def configure_display_manager(screen: Screen, desktop: str) -> str | None:
     recommended = {
         "gdm": ["gdm", "sddm", "ly", "lightdm-gtk", "lightdm-slick", "none"],
         "sddm": ["sddm", "ly", "lightdm-gtk", "lightdm-slick", "gdm", "none"],
-        "lightdm": ["lightdm-gtk", "lightdm-slick", "ly", "sddm", "gdm", "none"],
+        "lightdm-gtk": ["lightdm-gtk", "lightdm-slick", "ly", "sddm", "gdm", "none"],
         "ly": ["ly", "sddm", "lightdm-gtk", "lightdm-slick", "gdm", "none"],
     }.get(default_dm, ["lightdm-gtk", "ly", "sddm", "gdm", "lightdm-slick", "none"])
 
