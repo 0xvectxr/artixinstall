@@ -34,7 +34,10 @@ Repository = "https://github.com/1ypi/artixinstall"
 Issues = "https://github.com/1ypi/artixinstall/issues"
 
 [tool.setuptools]
-include-package-data = false
+include-package-data = true
+
+[tool.setuptools.package-data]
+artixinstall = ["data/*.json", "data/*.txt"]
 
 [tool.setuptools.packages.find]
 exclude = ["*.__pycache__", "*.__pycache__.*", "__pycache__", "__pycache__.*"]

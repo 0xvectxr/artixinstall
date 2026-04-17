@@ -8,3 +8,8 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
