@@ -13,10 +13,6 @@ from artixinstall.utils.validate import is_valid_username, is_valid_password, sa
 from artixinstall.tui.screen import Screen
 from artixinstall.tui.prompts import password_input_confirmed, text_input, yes_no
 
-"""
-
-    
-"""
 _HYPRLAND_NVIDIA_CONFIG = [
 "# This is an example Hyprland config file.",
 "# Refer to the wiki for more information.",
