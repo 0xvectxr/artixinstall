@@ -344,11 +344,9 @@ def configure_additional_packages(screen: Screen,
                 default=" ".join(sorted(selected_packages)),
             )
             if custom is not None:
-                # Parse and add
-                for pkg in custom.split():
-                    pkg = pkg.strip()
-                    if pkg:
-                        selected_packages.add(pkg)
+                selected_packages = {
+                    pkg.strip() for pkg in custom.split() if pkg.strip()
+                }
 
         elif result.key == "__clear__":
             selected_packages.clear()
