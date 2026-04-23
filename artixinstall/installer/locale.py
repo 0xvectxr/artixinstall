@@ -135,20 +135,11 @@ def configure_locale(screen: Screen) -> str | None:
     return _search_locales(screen, locales)
 
 
-def configure_timezone(screen: Screen) -> str | None:
-    """
-    Interactive timezone selection (two-level: continent → city).
-
-    Returns a timezone string (e.g. "Europe/Berlin"), or None if cancelled.
-    """
+def _collect_all_timezones() -> list[str]:
     zoneinfo = "/usr/share/zoneinfo"
-
     if not os.path.isdir(zoneinfo):
-        # Fallback: ask for manual input
-        return text_input(screen, "Enter timezone (e.g. Europe/Berlin):",
-                          default="UTC")
+        return ["UTC"]
 
-    # List continents/regions (directories in zoneinfo, excluding special dirs)
     excluded = {"posix", "right", "Etc", "SystemV", "US", "Brazil",
                 "Canada", "Chile", "Mexico", "Cuba", "Egypt",
                 "Eire", "GMT", "Greenwich", "Hongkong", "Iceland",
@@ -158,58 +149,145 @@ def configure_timezone(screen: Screen) -> str | None:
                 "posixrules", "tzdata.zi", "zone.tab", "zone1970.tab",
                 "iso3166.tab"}
 
-    continents = sorted([
-        d for d in os.listdir(zoneinfo)
-        if os.path.isdir(os.path.join(zoneinfo, d))
-        and d not in excluded
-        and not d.startswith(".")
-        and not d.startswith("+")
-    ])
+    timezones = ["UTC"]
+    for region in sorted(os.listdir(zoneinfo)):
+        if region in excluded or region.startswith(".") or region.startswith("+"):
+            continue
+        region_path = os.path.join(zoneinfo, region)
+        if not os.path.isdir(region_path):
+            continue
+        for entry in sorted(os.listdir(region_path)):
+            entry_path = os.path.join(region_path, entry)
+            if os.path.isdir(entry_path):
+                for sub in sorted(os.listdir(entry_path)):
+                    if os.path.isfile(os.path.join(entry_path, sub)):
+                        timezones.append(f"{region}/{entry}/{sub}")
+            elif os.path.isfile(entry_path):
+                timezones.append(f"{region}/{entry}")
+    return timezones
 
-    if not continents:
-        return text_input(screen, "Enter timezone (e.g. Europe/Berlin):",
-                          default="UTC")
 
-    # Add UTC as a direct option
-    continents.insert(0, "UTC")
+def _search_timezones(screen: Screen, all_timezones: list[str]) -> str | None:
+    query = ""
+    filtered = list(all_timezones)
+    selected_idx = 0
+    scroll_offset = 0
+    searching = False
 
-    selected_continent = run_selection_menu(screen, "Select region", continents)
-    if selected_continent is None:
-        return None
-
-    if selected_continent == "UTC":
-        return "UTC"
-
-    # List cities in the selected region
-    region_path = os.path.join(zoneinfo, selected_continent)
-    cities = sorted([
-        f for f in os.listdir(region_path)
-        if os.path.isfile(os.path.join(region_path, f))
-        or os.path.isdir(os.path.join(region_path, f))
-    ])
-
-    # Handle sub-regions (e.g. America/Indiana/Indianapolis)
-    all_entries = []
-    for city in cities:
-        city_path = os.path.join(region_path, city)
-        if os.path.isdir(city_path):
-            sub_cities = sorted([
-                f"{city}/{sub}" for sub in os.listdir(city_path)
-                if os.path.isfile(os.path.join(city_path, sub))
-            ])
-            all_entries.extend(sub_cities)
+    while True:
+        screen.refresh_size()
+        screen.clear()
+        screen.draw_header()
+        if searching:
+            screen.draw_footer("Type to filter  ↑↓ Navigate  Enter Accept  ESC Cancel search")
         else:
-            all_entries.append(city)
+            screen.draw_footer("↑↓ Navigate  Enter Select  / Search  c Clear  C Custom  ESC Back")
 
-    if not all_entries:
-        return f"{selected_continent}"
+        screen.draw_text(screen.content_y, 2, "Select Timezone", COLOR_TITLE, bold=True)
 
-    selected_city = run_selection_menu(screen, f"Select city ({selected_continent})",
-                                       all_entries)
-    if selected_city is None:
-        return None
+        if searching:
+            query_display = f"Search: {query}▏"
+        else:
+            query_display = f"Filter: {query}" if query else "Filter: (all timezones)"
+        screen.draw_text(screen.content_y + 1, 2, query_display,
+                         COLOR_VALUE_SET if query else COLOR_VALUE_UNSET)
+        screen.draw_text(screen.content_y + 2, 2,
+                         f"Available: {len(all_timezones)}  Showing: {len(filtered)}",
+                         COLOR_SEPARATOR)
 
-    return f"{selected_continent}/{selected_city}"
+        list_start_y = screen.content_y + 4
+        visible_count = max(1, screen.content_height - 5)
+
+        if selected_idx >= len(filtered):
+            selected_idx = max(0, len(filtered) - 1)
+        if selected_idx < scroll_offset:
+            scroll_offset = selected_idx
+        elif selected_idx >= scroll_offset + visible_count:
+            scroll_offset = selected_idx - visible_count + 1
+
+        if not filtered:
+            screen.draw_text(list_start_y, 4, "No timezones match the current filter.",
+                             COLOR_VALUE_UNSET)
+        else:
+            for draw_idx in range(visible_count):
+                tz_idx = scroll_offset + draw_idx
+                if tz_idx >= len(filtered):
+                    break
+                tz = filtered[tz_idx]
+                y = list_start_y + draw_idx
+                label = f"  {tz}"
+                if tz_idx == selected_idx:
+                    screen.draw_text(y, 1,
+                                     label.ljust(screen.width - 2)[:screen.width - 2],
+                                     COLOR_SELECTED)
+                else:
+                    screen.draw_text(y, 4, label, COLOR_NORMAL)
+
+        screen.stdscr.refresh()
+        key = screen.get_input()
+
+        if key == curses.KEY_RESIZE:
+            continue
+
+        if searching:
+            if key == 27:
+                searching = False
+                curses.curs_set(0)
+                continue
+            elif key in (curses.KEY_ENTER, ord('\n'), ord('\r')):
+                searching = False
+                curses.curs_set(0)
+                if filtered:
+                    return filtered[selected_idx]
+                continue
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                if query:
+                    query = query[:-1]
+                    filtered = ([tz for tz in all_timezones if query.lower() in tz.lower()]
+                                if query else list(all_timezones))
+                    selected_idx = 0
+                    scroll_offset = 0
+            elif key in (curses.KEY_UP, ord('k')) and filtered:
+                selected_idx = max(0, selected_idx - 1)
+            elif key in (curses.KEY_DOWN, ord('j')) and filtered:
+                selected_idx = min(len(filtered) - 1, selected_idx + 1)
+            elif 32 <= key <= 126:
+                query += chr(key)
+                filtered = [tz for tz in all_timezones if query.lower() in tz.lower()]
+                selected_idx = 0
+                scroll_offset = 0
+            continue
+
+        if key in (27, ord('q'), ord('Q')):
+            return None
+        elif key in (curses.KEY_UP, ord('k')) and filtered:
+            selected_idx = max(0, selected_idx - 1)
+        elif key in (curses.KEY_DOWN, ord('j')) and filtered:
+            selected_idx = min(len(filtered) - 1, selected_idx + 1)
+        elif key == curses.KEY_HOME and filtered:
+            selected_idx = 0
+        elif key == curses.KEY_END and filtered:
+            selected_idx = len(filtered) - 1
+        elif key in (curses.KEY_ENTER, ord('\n'), ord('\r')) and filtered:
+            return filtered[selected_idx]
+        elif key == ord('/'):
+            searching = True
+            curses.curs_set(1)
+        elif key == ord('c'):
+            query = ""
+            filtered = list(all_timezones)
+            selected_idx = 0
+            scroll_offset = 0
+        elif key == ord('C'):
+            custom = text_input(screen, "Enter timezone (e.g. Europe/Berlin):",
+                                default="UTC")
+            if custom is not None:
+                return custom
+
+
+def configure_timezone(screen: Screen) -> str | None:
+    all_timezones = _collect_all_timezones()
+    return _search_timezones(screen, all_timezones)
 
 
 def configure_keymap(screen: Screen) -> str | None:
